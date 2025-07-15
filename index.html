@@ -49,6 +49,12 @@
       <option value="superliga">SuperLiga</option>
       <option value="turniej">Turniej Mistrzów</option>
     </select>
+    Ważność:
+    <select id="matchImportance">
+      <option value="niska">Niska</option>
+      <option value="średnia">Średnia</option>
+      <option value="wysoka">Wysoka</option>
+    </select>
     <button type="submit">Dodaj mecz</button>
   </form>
 
@@ -142,11 +148,13 @@
       e.preventDefault();
       const day = parseInt(document.getElementById("matchDay").value);
       const type = document.getElementById("matchType").value;
+      const importance = document.getElementById("matchImportance").value;
       const dayIndex = schedule.findIndex(d => d.day === day);
+      const match = { type, importance };
       if (dayIndex === -1) {
-        schedule.push({ day, matches: [type] });
+        schedule.push({ day, matches: [match] });
       } else {
-        schedule[dayIndex].matches.push(type);
+        schedule[dayIndex].matches.push(match);
       }
       schedule.sort((a, b) => a.day - b.day);
       updateSchedule();
@@ -158,7 +166,7 @@
       list.innerHTML = "";
       schedule.forEach((d, i) => {
         const li = document.createElement("li");
-        li.textContent = `Dzień ${d.day}: ${d.matches.join(", ")}`;
+        li.textContent = `Dzień ${d.day}: ${d.matches.map(m => `${m.type} (${m.importance})`).join(", ")}`;
         const btn = document.createElement("button");
         btn.textContent = "Usuń";
         btn.onclick = () => { schedule.splice(i, 1); updateSchedule(); };
@@ -168,75 +176,84 @@
     }
 
     function simulate() {
-      let output = "";
-      schedule.forEach(dayEntry => {
-        output += `\nDzień ${dayEntry.day}:\n`;
-        dayEntry.matches.forEach(type => {
-          const config = matchTypes[type];
-          const bestFormation = chooseBestFormation();
-          if (!bestFormation) {
-            output += "Brak wystarczającej liczby graczy do żadnej formacji.\n";
+      const output = [];
+      let playerHealths = players.map(p => ({ ...p }));
+
+      schedule.forEach(day => {
+        output.push(`Dzień ${day.day}`);
+        day.matches.forEach((type, matchIndex) => {
+          const matchInfo = matchTypes[type];
+          output.push(`  Mecz ${matchIndex + 1} (${type.toUpperCase()})`);
+
+          // Wybór najlepszej formacji
+          let bestFormation = formations[0];
+          let maxFit = -1;
+
+          formations.forEach(f => {
+            let fit = 0;
+            for (let pos in f.structure) {
+              const count = f.structure[pos];
+              const available = playerHealths.filter(p => p.position === pos && p.health > 40).length;
+              fit += Math.min(available, count);
+            }
+            if (fit > maxFit) {
+              maxFit = fit;
+              bestFormation = f;
+            }
+          });
+
+          output.push(`    Zalecana formacja: ${bestFormation.name}`);
+
+          const lineup = [];
+          for (let pos in bestFormation.structure) {
+            const needed = bestFormation.structure[pos];
+            const available = playerHealths.filter(p => p.position === pos).sort((a, b) => b.health - a.health);
+            lineup.push(...available.slice(0, needed));
+          }
+
+          if (lineup.length < 11) {
+            output.push("    Brakuje zawodników do pełnego składu!");
             return;
           }
-          const { name, structure } = bestFormation;
-          const { starters, substitutes } = pickPlayers(structure);
-          output += `Formacja: ${name}\nSkład podstawowy:\n`;
-          starters.forEach(p => output += ` - ${p.name} (${p.position}, ${p.health}%)\n`);
-          output += `Zmiany:\n`;
-          substitutes.forEach(s => {
-            output += ` - ${s.sub.name} za ${s.out.name} (${s.sub.position})\n`;
-          });
-          // Aktualizacja zdrowia
-          [...starters, ...substitutes.map(s => s.sub)].forEach(p => {
-            p.health -= config.lossPer30;
-            if (p.health < 0) p.health = 0;
-          });
-        });
-      });
-      document.getElementById("output").textContent = output;
-    }
 
-    function chooseBestFormation() {
-      let best = null;
-      for (const f of formations) {
-        const available = { BR:0, OB:0, DP:0, PM:0, OP:0, NA:0 };
-        players.forEach(p => {
-          if (p.health > 0) available[p.position]++;
-        });
-        const canPlay = Object.entries(f.structure).every(([pos, req]) => available[pos] >= req);
-        const totalRequired = Object.values(f.structure).reduce((a, b) => a + b, 0);
-        if (canPlay && totalRequired === 11) {
-          best = f;
-          break;
-        }
-      }
-      return best;
-    }
+          output.push("    Skład podstawowy:");
+          lineup.forEach(p => output.push(`      ${p.name} (${p.position})`));
 
-    function pickPlayers(structure) {
-      const starters = [];
-      const substitutes = [];
-      const available = [...players.filter(p => p.health > 0)].sort((a, b) => b.health - a.health);
-      const used = new Set();
-      for (const pos in structure) {
-        const needed = structure[pos];
-        let count = 0;
-        for (const p of available) {
-          if (!used.has(p) && p.position === pos && count < needed) {
-            starters.push(p);
-            used.add(p);
-            count++;
+          // Symulacja zmian
+          const changesLeft = matchInfo.changes;
+          const subs = [];
+          const availableSubs = playerHealths.filter(p => !lineup.includes(p)).sort((a, b) => b.health - a.health);
+
+          for (let i = 0; i < changesLeft; i++) {
+            const outPlayer = lineup.find(p => p.health < 60);
+            if (!outPlayer) break;
+            const samePosition = availableSubs.find(p => p.position === outPlayer.position);
+            if (samePosition) {
+              const minute = 60 + i * 10; // Optymalna minuta zmiany
+              subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position})`);
+              lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
+              availableSubs.splice(availableSubs.indexOf(samePosition), 1);
+            }
           }
-        }
-      }
-      const remaining = available.filter(p => !used.has(p));
-      const numSubs = Math.min(3, remaining.length);
-      for (let i = 0; i < numSubs; i++) {
-        const sub = remaining[i];
-        const out = starters[i % starters.length];
-        substitutes.push({ sub, out });
-      }
-      return { starters, substitutes };
+
+          if (subs.length > 0) {
+            output.push("    Zaplanowane zmiany:");
+            subs.forEach(s => output.push(s));
+          }
+
+          // Aktualizacja zdrowia po meczu
+          lineup.forEach(p => {
+            const loss = type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
+            p.health = Math.max(0, p.health - loss);
+          });
+
+        });
+
+        // Regeneracja
+        playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
+      });
+
+      document.getElementById("output").textContent = output.join("\n");
     }
   </script>
 </body>
