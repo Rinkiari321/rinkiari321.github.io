@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Planer Meczowy - Optymalizacja Zdrowia</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    h2 { margin-top: 30px; }
+    table, th, td { border: 1px solid #ccc; border-collapse: collapse; padding: 5px; }
+    th { background-color: #eee; }
+    .player-table td { min-width: 100px; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Symulacja Meczów i Zdrowia Zawodników</h1>
+
+  <button onclick="simulate()">Symuluj Harmonogram</button>
+  <pre id="output"></pre>
+
+  <script>
+    const matchTypes = {
+      sparing:     { lossPer30: 0, changes: 9, important: false },
+      liga:        { lossPer30: 2, changes: 3, important: true },
+      superliga:   { lossPer30: 4, changes: 3, important: true },
+      turniej:     { lossPer30: 3, changes: 3, important: true },
+    };
+
+    let players = [
+      { name: "Zawodnik1", health: 100, isKey: true },
+      { name: "Zawodnik2", health: 100, isKey: true },
+      { name: "Zawodnik3", health: 100, isKey: false },
+      { name: "Zawodnik4", health: 100, isKey: false },
+      { name: "Zawodnik5", health: 100, isKey: false },
+      { name: "Zawodnik6", health: 100, isKey: false },
+      { name: "Zawodnik7", health: 100, isKey: false },
+      { name: "Zawodnik8", health: 100, isKey: false },
+      { name: "Zawodnik9", health: 100, isKey: false },
+      { name: "Zawodnik10", health: 100, isKey: false },
+      { name: "Zawodnik11", health: 100, isKey: false },
+      { name: "Zawodnik12", health: 100, isKey: false },
+      { name: "Zawodnik13", health: 100, isKey: false },
+      { name: "Zawodnik14", health: 100, isKey: false },
+    ];
+
+    const schedule = [
+      { day: 1, matches: ["sparing", "liga"] },
+      { day: 2, matches: [] },
+      { day: 3, matches: ["superliga"] },
+      { day: 4, matches: ["liga", "turniej"] },
+    ];
+
+    function simulate() {
+      const output = document.getElementById("output");
+      let log = "";
+
+      const clone = players.map(p => ({ ...p }));
+
+      for (let dayInfo of schedule) {
+        log += `\nDzień ${dayInfo.day}:\n`;
+        const matches = dayInfo.matches;
+
+        for (let matchType of matches) {
+          const match = matchTypes[matchType];
+          const starters = chooseStarters(clone, match);
+          const subs = chooseSubs(clone, match, starters);
+
+          applyHealthLoss(starters, subs, match);
+
+          log += `  Mecz: ${matchType.toUpperCase()}\n`;
+          log += `    Startują: ${starters.map(p => p.name).join(", ")}\n`;
+          log += `    Zmiany:  ${subs.map(p => p.name).join(", ")}\n`;
+        }
+
+        // regeneracja
+        clone.forEach(p => p.health = Math.min(100, p.health + 6));
+
+        log += `  Zdrowie po dniu:\n`;
+        for (let p of clone) {
+          log += `    ${p.name} - ${p.health.toFixed(1)}%\n`;
+        }
+      }
+
+      output.textContent = log;
+    }
+
+    function chooseStarters(players, match) {
+      return players
+        .filter(p => p.health > 30)
+        .sort((a, b) => (b.isKey * 100 + b.health) - (a.isKey * 100 + a.health))
+        .slice(0, 11);
+    }
+
+    function chooseSubs(players, match, starters) {
+      const starterNames = new Set(starters.map(p => p.name));
+      return players
+        .filter(p => !starterNames.has(p.name) && p.health > 30)
+        .sort((a, b) => b.health - a.health)
+        .slice(0, match.changes);
+    }
+
+    function applyHealthLoss(starters, subs, match) {
+      const full = match.lossPer30 * 3;
+      const sixty = match.lossPer30 * 2;
+      const thirty = match.lossPer30 * 1;
+
+      for (let i = 0; i < starters.length; i++) {
+        if (i < subs.length) starters[i].health -= sixty;
+        else starters[i].health -= full;
+      }
+      for (let sub of subs) {
+        sub.health -= thirty;
+      }
+    }
+  </script>
+</body>
+</html>
