@@ -167,7 +167,112 @@
       });
     }
 
-    // Funkcja simulate() pozostała bez zmian i jest za długa by ją tutaj ponownie wstawiać
+    function simulate() {
+      const output = document.getElementById("output");
+      let log = "";
+
+      const clone = players.map(p => ({ ...p }));
+
+      for (let dayInfo of schedule) {
+        log += `\nDzień ${dayInfo.day}:\n`;
+        const matches = dayInfo.matches;
+
+        for (let matchType of matches) {
+          const match = matchTypes[matchType];
+          const bestFormation = chooseBestFormation(clone);
+          const starters = chooseStarters(clone, match, bestFormation.structure);
+          const subs = chooseSubs(clone, match, starters);
+
+          applyHealthLoss(starters, subs, match);
+
+          log += `  Mecz: ${matchType.toUpperCase()}\n`;
+          log += `    Formacja: ${bestFormation.name}\n`;
+          log += `    Startują: ${starters.map(p => p.name + ' (' + p.position + ')').join(", ")}\n`;
+          log += `    Zmiany:  ${subs.map(p => p.name + ' (' + p.position + ')').join(", ")}\n`;
+        }
+
+        // regeneracja
+        clone.forEach(p => p.health = Math.min(100, p.health + 6));
+
+        log += `  Zdrowie po dniu:\n`;
+        for (let p of clone) {
+          log += `    ${p.name} (${p.position}) - ${p.health.toFixed(1)}%\n`;
+        }
+      }
+
+      output.textContent = log;
+    }
+    function chooseBestFormation(players) {
+      let best = null;
+      let bestScore = -Infinity;
+
+      for (let form of formations) {
+        let totalScore = 0;
+        let ok = true;
+
+        for (let pos in form.structure) {
+          const needed = form.structure[pos];
+          const available = players
+            .filter(p => p.position === pos && p.health > 30)
+            .sort((a, b) => (b.isKey * 100 + b.health) - (a.isKey * 100 + a.health))
+            .slice(0, needed);
+
+          if (available.length < needed) {
+            ok = false;
+            break;
+          }
+
+          totalScore += available.reduce((sum, p) => sum + p.health + (p.isKey ? 20 : 0), 0);
+        }
+
+        if (ok && totalScore > bestScore) {
+          bestScore = totalScore;
+          best = form;
+        }
+      }
+
+      return best || formations[0];
+    }
+
+    function chooseStarters(players, match, formationStructure) {
+      const starters = [];
+      const used = new Set();
+
+      for (let pos of Object.keys(formationStructure)) {
+        const count = formationStructure[pos];
+        const available = players
+          .filter(p => p.position === pos && p.health > 30 && !used.has(p.name))
+          .sort((a, b) => (b.isKey * 100 + b.health) - (a.isKey * 100 + a.health))
+          .slice(0, count);
+
+        available.forEach(p => used.add(p.name));
+        starters.push(...available);
+      }
+
+      return starters;
+    }
+
+    function chooseSubs(players, match, starters) {
+      const starterNames = new Set(starters.map(p => p.name));
+      return players
+        .filter(p => !starterNames.has(p.name) && p.health > 30)
+        .sort((a, b) => b.health - a.health)
+        .slice(0, match.changes);
+    }
+
+    function applyHealthLoss(starters, subs, match) {
+      const full = match.lossPer30 * 3;
+      const sixty = match.lossPer30 * 2;
+      const thirty = match.lossPer30 * 1;
+
+      for (let i = 0; i < starters.length; i++) {
+        if (i < subs.length) starters[i].health -= sixty;
+        else starters[i].health -= full;
+      }
+      for (let sub of subs) {
+        sub.health -= thirty;
+      }
+    }
   </script>
 </body>
 </html>
