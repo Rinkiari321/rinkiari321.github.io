@@ -248,7 +248,7 @@
 
           // Aktualizacja zdrowia po meczu
           lineup.forEach(p => {
-            const loss = type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
+            const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
             p.health = Math.max(0, p.health - loss);
           });
 
