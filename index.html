@@ -311,7 +311,7 @@
 			output.push(`      ${status} ${p.name} (${p.position}) - ${p.health}%`);
 		  });
 
-		  // Symulacja zmian – oszczędzanie graczy potrzebnych później
+		  // Symulacja zmian – oparta na maksymalnym przyroście siły
 		  const changesLeft = matchInfo.changes;
 		  const subs = [];
 		  const availableSubs = playerHealths.filter(p =>
@@ -320,20 +320,32 @@
 
 		  let changesMade = 0;
 		  for (let i = 0; i < changesLeft && changesMade < changesLeft; i++) {
-			const candidate = lineup
-			  .map(p => ({
-				player: p,
-				planned: lineupPlans.some(plan =>
+			// Zbadaj kandydatów do zmiany
+			const candidates = lineup
+			  .map(p => {
+				const isPlanned = lineupPlans.some(plan =>
 				  plan.day > day.day && plan.day <= day.day + 3 &&
 				  plan.lineup.some(pl => pl.name === p.name)
-				)
-			  }))
-			  .filter(p => p.planned)
-			  .map(p => p.player)[0];
+				);
+				if (!isPlanned) return null;
 
-			if (!candidate) break;
+				const futureDay = lineupPlans.find(plan =>
+				  plan.day > day.day && plan.lineup.some(pl => pl.name === p.name)
+				);
+				const futureHealth = Math.min(100, p.health + 6 * (futureDay.day - day.day));
+				const currentEffectiveness = p.strength * (p.health / 100);
+				const futureEffectiveness = p.strength * (futureHealth / 100);
+				const benefit = futureEffectiveness - currentEffectiveness;
 
-			const outPlayer = candidate;
+				return { player: p, benefit };
+			  })
+			  .filter(Boolean)
+			  .sort((a, b) => b.benefit - a.benefit);
+
+			const best = candidates[0];
+			if (!best || best.benefit < 1) break;
+
+			const outPlayer = best.player;
 			const samePosition = availableSubs.find(p =>
 			  p.position === outPlayer.position &&
 			  (p.position !== 'BR' || outPlayer.position === 'BR')
@@ -341,7 +353,7 @@
 
 			if (samePosition) {
 			  const minute = 45 + changesMade * 10;
-			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [oszczędzamy na ważny mecz]`);
+			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [zysk: +${best.benefit.toFixed(1)} efektywności]`);
 			  lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
 			  availableSubs.splice(availableSubs.indexOf(samePosition), 1);
 			  changesMade++;
@@ -353,7 +365,7 @@
 			subs.forEach(s => output.push(s));
 		  }
 
-		  // Aktualizacja zdrowia
+		  // Aktualizacja zdrowia po meczu
 		  lineup.forEach(p => {
 			const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
 			p.health = Math.max(0, p.health - loss);
@@ -361,7 +373,7 @@
 
 		});
 
-		// Regeneracja
+		// Regeneracja po dniu
 		playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
 	  });
 
