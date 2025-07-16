@@ -183,91 +183,137 @@
       });
     }
 
-    function simulate() {
-      const output = [];
-      let playerHealths = players.map(p => ({ ...p }));
+	function getFutureMatchImportance(day, player) {
+	  let importanceScore = 0;
+	  for (let i = 1; i <= 3; i++) {
+		const futureDay = schedule.find(d => d.day === day + i);
+		if (futureDay) {
+		  futureDay.matches.forEach(m => {
+			if (m.importance === "wysoka" && player.key) importanceScore += 3;
+			else if (m.importance === "średnia" && player.key) importanceScore += 2;
+			else if (m.importance === "niska" && player.key) importanceScore += 1;
+		  });
+		}
+	  }
+	  return importanceScore;
+	}
 
-      schedule.forEach(day => {
-        output.push(`Dzień ${day.day}`);
-        day.matches.forEach((match, matchIndex) => {
-          const matchInfo = matchTypes[match.type];
-          output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()})`);
+	function simulate() {
+	  const output = [];
+	  let playerHealths = players.map(p => ({ ...p }));
 
-          // Wybór najlepszej formacji
-          let bestFormation = formations[0];
-          let maxFit = -1;
+	  schedule.forEach(day => {
+		output.push(`Dzień ${day.day}`);
+		day.matches.forEach((match, matchIndex) => {
+		  const matchInfo = matchTypes[match.type];
+		  output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()})`);
 
-          formations.forEach(f => {
-            let fit = 0;
-            for (let pos in f.structure) {
-              const count = f.structure[pos];
-              const available = playerHealths.filter(p => p.position === pos && p.health > 40).length;
-              fit += Math.min(available, count);
-            }
-            if (fit > maxFit) {
-              maxFit = fit;
-              bestFormation = f;
-            }
-          });
+		  // Najlepsza formacja
+		  let bestFormation = formations[0];
+		  let maxFit = -1;
 
-          output.push(`    Zalecana formacja: ${bestFormation.name}`);
+		  formations.forEach(f => {
+			let fit = 0;
+			for (let pos in f.structure) {
+			  const count = f.structure[pos];
+			  const available = playerHealths.filter(p => p.position === pos && p.health > 40).length;
+			  fit += Math.min(available, count);
+			}
+			if (fit > maxFit) {
+			  maxFit = fit;
+			  bestFormation = f;
+			}
+		  });
 
-          const lineup = [];
-          for (let pos in bestFormation.structure) {
-            const needed = bestFormation.structure[pos];
-            const available = playerHealths.filter(p => p.position === pos).sort((a, b) => b.health - a.health);
-            lineup.push(...available.slice(0, needed));
-          }
+		  output.push(`    Zalecana formacja: ${bestFormation.name}`);
 
-          if (lineup.length < 11) {
-            output.push("    Brakuje zawodników do pełnego składu!");
-            return;
-          }
+			const lineup = [];
 
-          output.push("    Skład podstawowy:");
-          lineup.forEach(p => output.push(`      ${p.name} (${p.position})`));
+			for (let pos in bestFormation.structure) {
+			  const needed = bestFormation.structure[pos];
 
-          // Symulacja zmian
-          const changesLeft = matchInfo.changes;
-          const subs = [];
-          const availableSubs = playerHealths.filter(p =>
-            !lineup.some(lp => lp.name === p.name)
-          ).sort((a, b) => b.health - a.health);
+			  const candidates = playerHealths
+				.filter(p => p.position === pos)
+				.sort((a, b) => {
+				  // priorytet:
+				  // 1. zdrowi i kluczowi na ważny mecz? oszczędzamy!
+				  const futureA = getFutureMatchImportance(day.day, a);
+				  const futureB = getFutureMatchImportance(day.day, b);
+				  const aPriority = (a.key ? futureA : 0);
+				  const bPriority = (b.key ? futureB : 0);
+				  const restA = a.health;
+				  const restB = b.health;
+				  
+				  // preferuj zawodników mniej eksploatowanych i niepotrzebnych w przyszłości
+				  return (bPriority - aPriority) || (restB - restA);
+				});
 
-          for (let i = 0; i < changesLeft; i++) {
-            const outPlayer = lineup.find(p => p.health < 60);
-            if (!outPlayer) break;
-            const samePosition = availableSubs.find(p =>
-              p.position === outPlayer.position &&
-              (p.position !== 'BR' || outPlayer.position === 'BR')
-            );
-            if (samePosition) {
-              const minute = 60 + i * 10; // Optymalna minuta zmiany
-              subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position})`);
-              lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
-              availableSubs.splice(availableSubs.indexOf(samePosition), 1);
-            }
-          }
+			  // tylko tych, którzy mają > 26% zdrowia
+			  const chosen = candidates.filter(p => p.health > 26).slice(-needed);
+			  lineup.push(...chosen);
+			}
 
-          if (subs.length > 0) {
-            output.push("    Zaplanowane zmiany:");
-            subs.forEach(s => output.push(s));
-          }
+		  if (lineup.length < 11) {
+			output.push("    Brakuje zawodników do pełnego składu!");
+			return;
+		  }
 
-          // Aktualizacja zdrowia po meczu
-          lineup.forEach(p => {
-            const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
-            p.health = Math.max(0, p.health - loss);
-          });
+		  output.push("    Skład podstawowy:");
+		  lineup.forEach(p => output.push(`      ${p.name} (${p.position}) - ${p.health}%`));
 
-        });
+		  // Lepsza logika zmian
+		  const changesLeft = matchInfo.changes;
+		  const subs = [];
+		  const availableSubs = playerHealths.filter(p =>
+			!lineup.some(lp => lp.name === p.name)
+		  ).sort((a, b) => b.health - a.health);
 
-        // Regeneracja
-        playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
-      });
+		  let changesMade = 0;
+		  for (let i = 0; i < changesLeft && changesMade < changesLeft; i++) {
+			const candidate = lineup
+			  .map(p => ({
+				player: p,
+				futureImportance: getFutureMatchImportance(day.day, p)
+			  }))
+			  .filter(p => p.futureImportance > 0)
+			  .sort((a, b) => b.futureImportance - a.futureImportance)[0];
 
-      document.getElementById("output").textContent = output.join("\n");
-    }
+			if (!candidate) break;
+
+			const outPlayer = candidate.player;
+			const samePosition = availableSubs.find(p =>
+			  p.position === outPlayer.position &&
+			  (p.position !== 'BR' || outPlayer.position === 'BR')
+			);
+
+			if (samePosition) {
+			  const minute = 45 + changesMade * 10;
+			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [oszczędzany na kolejne mecze]`);
+			  lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
+			  availableSubs.splice(availableSubs.indexOf(samePosition), 1);
+			  changesMade++;
+			}
+		  }
+
+		  if (subs.length > 0) {
+			output.push("    Zaplanowane zmiany:");
+			subs.forEach(s => output.push(s));
+		  }
+
+		  // Spadek zdrowia po meczu
+		  lineup.forEach(p => {
+			const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
+			p.health = Math.max(0, p.health - loss);
+		  });
+
+		});
+
+		// Regeneracja zdrowia
+		playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
+	  });
+
+	  document.getElementById("output").textContent = output.join("\n");
+	}
   </script>
 </body>
 </html>
