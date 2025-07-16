@@ -122,19 +122,12 @@
             name: p.name,
             position: pos,
             health: Math.min(100, Math.max(0, p.form)),
-            key: false,
             strength
           };
           players.push(player);
           if (!grouped[pos]) grouped[pos] = [];
           grouped[pos].push(player);
         });
-
-        // mark top 2 in each position as key players
-        for (const pos in grouped) {
-          grouped[pos].sort((a, b) => b.strength - a.strength);
-          grouped[pos].slice(0, 2).forEach(p => p.key = true);
-        }
 
         renderPlayers();
       } catch (e) {
@@ -147,7 +140,7 @@
       ul.innerHTML = "";
       players.forEach(p => {
         const li = document.createElement("li");
-        li.textContent = `${p.name} (${p.position}) - ${p.health}% ${p.key ? "[KLUCZOWY]" : ""}`;
+        li.textContent = `${p.name} (${p.position}) - ${p.health}%`;
         ul.appendChild(li);
       });
     }
@@ -189,9 +182,9 @@
 		const futureDay = schedule.find(d => d.day === day + i);
 		if (futureDay) {
 		  futureDay.matches.forEach(m => {
-			if (m.importance === "wysoka" && player.key) importanceScore += 3;
-			else if (m.importance === "średnia" && player.key) importanceScore += 2;
-			else if (m.importance === "niska" && player.key) importanceScore += 1;
+			if (m.importance === "wysoka") importanceScore += 3;
+			else if (m.importance === "średnia") importanceScore += 2;
+			else if (m.importance === "niska") importanceScore += 1;
 		  });
 		}
 	  }
@@ -239,146 +232,152 @@
 	  return plans;
 	}
 
-	function simulate() {
-	  const output = [];
-	  let playerHealths = players.map(p => ({ ...p }));
-	  const lineupPlans = planStrategicLineups();
+    function simulate() {
+      const output = [];
+      let playerHealths = players.map(p => ({ ...p }));
+      const lineupPlans = planStrategicLineups();
 
-	  schedule.forEach(day => {
-		output.push(`Dzień ${day.day}`);
-		day.matches.forEach((match, matchIndex) => {
-		  const matchInfo = matchTypes[match.type];
-		  output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()}, ważność: ${match.importance})`);
+      schedule.forEach(day => {
+        output.push(`Dzień ${day.day}`);
+        day.matches.forEach((match, matchIndex) => {
+          const matchInfo = matchTypes[match.type];
+          output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()}, ważność: ${match.importance})`);
 
-		  // Najlepsza formacja
-		  let bestFormation = formations[0];
-		  let maxFit = -1;
+          let bestFormation = null;
+			let bestScore = -Infinity;
 
-		  formations.forEach(f => {
-			let fit = 0;
-			for (let pos in f.structure) {
-			  const count = f.structure[pos];
-			  const available = playerHealths.filter(p => p.position === pos && p.health > 40).length;
-			  fit += Math.min(available, count);
-			}
-			if (fit > maxFit) {
-			  maxFit = fit;
-			  bestFormation = f;
-			}
-		  });
+			formations.forEach(f => {
+			  let selected = [];
 
-		  output.push(`    Zalecana formacja: ${bestFormation.name}`);
+			  for (let pos in f.structure) {
+				const count = f.structure[pos];
+				const candidates = playerHealths
+				  .filter(p => p.position === pos)
+				  .sort((a, b) => {
+					if (match.importance === 'wysoka') {
+					  return (b.strength * (b.health / 100)) - (a.strength * (a.health / 100));
+					} else if (match.importance === 'niska') {
+					  return b.health - a.health;
+					} else {
+					  // średnia ważność: kompromis siła + zdrowie
+					  const score = p => 0.5 * (p.strength * (p.health / 100)) + 0.5 * p.health;
+					  return score(b) - score(a);
+					}
+				  })
+				  .slice(0, count);
 
-		  const lineup = [];
+				selected.push(...candidates);
+			  }
 
-		  for (let pos in bestFormation.structure) {
-			const needed = bestFormation.structure[pos];
+			  if (selected.length < 11) return;
 
-			const candidates = playerHealths
-			  .filter(p => p.position === pos)
-			  .sort((a, b) => {
-				const aPlanned = lineupPlans.some(plan =>
-				  plan.day === day.day &&
-				  plan.lineup.some(pl => pl.name === a.name)
-				);
-				const bPlanned = lineupPlans.some(plan =>
-				  plan.day === day.day &&
-				  plan.lineup.some(pl => pl.name === b.name)
-				);
+			  const totalStrength = selected.reduce((sum, p) => sum + p.strength * (p.health / 100), 0);
+			  const totalHealth = selected.reduce((sum, p) => sum + p.health, 0);
 
-				const aScore = (aPlanned ? 100000 : 0) + a.strength * (a.health / 100);
-				const bScore = (bPlanned ? 100000 : 0) + b.strength * (b.health / 100);
+			  let score = 0;
+			  if (match.importance === 'wysoka') score = totalStrength;
+			  else if (match.importance === 'niska') score = totalHealth;
+			  else score = 0.5 * totalStrength + 0.5 * totalHealth;
 
-				return bScore - aScore;
-			  });
+			  if (score > bestScore) {
+				bestScore = score;
+				bestFormation = f;
+			  }
+			});
 
-			const chosen = candidates.filter(p => p.health > 40).slice(0, needed);
-			lineup.push(...chosen);
-		  }
+          output.push(`    Zalecana formacja: ${bestFormation.name}`);
 
-		  if (lineup.length < 11) {
-			output.push("    Brakuje zawodników do pełnego składu!");
-			return;
-		  }
+          const lineup = [];
 
-		  output.push("    Skład podstawowy (ze zdrowiem):");
-		  lineup.forEach(p => {
-			let status = "";
-			if (p.health >= 90) status = "🟢";
-			else if (p.health >= 70) status = "🟡";
-			else if (p.health >= 50) status = "🟠";
-			else status = "🔴";
-			output.push(`      ${status} ${p.name} (${p.position}) - ${p.health}%`);
-		  });
+          for (let pos in bestFormation.structure) {
+            const needed = bestFormation.structure[pos];
+            const candidates = playerHealths
+              .filter(p => p.position === pos && p.health > 26)
+              .sort((a, b) => (b.strength * (b.health / 100)) - (a.strength * (a.health / 100)))
+              .slice(0, needed);
+            lineup.push(...candidates);
+          }
 
-		  // Symulacja zmian – oparta na maksymalnym przyroście siły
-		  const changesLeft = matchInfo.changes;
-		  const subs = [];
-		  const availableSubs = playerHealths.filter(p =>
-			!lineup.some(lp => lp.name === p.name)
-		  ).sort((a, b) => b.health - a.health);
+          if (lineup.length < 11) {
+            output.push("    Brakuje zawodników do pełnego składu!");
+            return;
+          }
 
-		  let changesMade = 0;
-		  for (let i = 0; i < changesLeft && changesMade < changesLeft; i++) {
-			// Zbadaj kandydatów do zmiany
-			const candidates = lineup
-			  .map(p => {
-				const isPlanned = lineupPlans.some(plan =>
-				  plan.day > day.day && plan.day <= day.day + 3 &&
-				  plan.lineup.some(pl => pl.name === p.name)
-				);
-				if (!isPlanned) return null;
+          output.push("    Skład podstawowy (ze zdrowiem):");
+          lineup.forEach(p => {
+            let status = "";
+            if (p.health >= 90) status = "🟢";
+            else if (p.health >= 70) status = "🟡";
+            else if (p.health >= 50) status = "🟠";
+            else status = "🔴";
+            output.push(`      ${status} ${p.name} (${p.position}) - ${p.health}%`);
+          });
 
-				const futureDay = lineupPlans.find(plan =>
-				  plan.day > day.day && plan.lineup.some(pl => pl.name === p.name)
-				);
-				const futureHealth = Math.min(100, p.health + 6 * (futureDay.day - day.day));
-				const currentEffectiveness = p.strength * (p.health / 100);
-				const futureEffectiveness = p.strength * (futureHealth / 100);
-				const benefit = futureEffectiveness - currentEffectiveness;
+          const playTimes = {};
+          lineup.forEach(p => {
+            playTimes[p.name] = { start: 0, end: 90 };
+          });
 
-				return { player: p, benefit };
-			  })
-			  .filter(Boolean)
-			  .sort((a, b) => b.benefit - a.benefit);
+          // NOWA STRATEGIA: zmiany oszczędzające zdrowie
+          const changesLeft = matchInfo.changes;
+          const subs = [];
+          const availableSubs = playerHealths.filter(p =>
+            !lineup.some(lp => lp.name === p.name) &&
+            p.health > 30
+          ).sort((a, b) => b.health - a.health);
 
-			const best = candidates[0];
-			if (!best || best.benefit < 1) break;
+          let changesMade = 0;
 
-			const outPlayer = best.player;
-			const samePosition = availableSubs.find(p =>
-			  p.position === outPlayer.position &&
-			  (p.position !== 'BR' || outPlayer.position === 'BR')
-			);
+          const swapCandidates = lineup
+            .filter(p => p.position !== 'BR')
+            .sort((a, b) => a.health - b.health);
 
-			if (samePosition) {
-			  const minute = 45 + changesMade * 10;
-			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [zysk: +${best.benefit.toFixed(1)} efektywności]`);
-			  lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
-			  availableSubs.splice(availableSubs.indexOf(samePosition), 1);
-			  changesMade++;
-			}
-		  }
+          for (const outPlayer of swapCandidates) {
+            if (changesMade >= changesLeft) break;
 
-		  if (subs.length > 0) {
-			output.push("    Zaplanowane zmiany:");
-			subs.forEach(s => output.push(s));
-		  }
+            const sub = availableSubs.find(p => p.position === outPlayer.position);
+            if (!sub) continue;
 
-		  // Aktualizacja zdrowia po meczu
-		  lineup.forEach(p => {
-			const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
-			p.health = Math.max(0, p.health - loss);
-		  });
+            const minute = 60;
+            const minutesIn = 90 - minute;
 
-		});
+            subs.push(`      Zmiana w ${minute}' - ${sub.name} za ${outPlayer.name} (${outPlayer.position}) [oszczędzanie zdrowia]`);
 
-		// Regeneracja po dniu
-		playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
-	  });
+            playTimes[outPlayer.name].end = minute;
+            playTimes[sub.name] = { start: minute, end: 90 };
 
-	  document.getElementById("output").textContent = output.join("\n");
-	}
+            lineup.splice(lineup.indexOf(outPlayer), 1, sub);
+            availableSubs.splice(availableSubs.indexOf(sub), 1);
+            changesMade++;
+          }
+
+          if (subs.length > 0) {
+            output.push("    Zaplanowane zmiany:");
+            subs.forEach(s => output.push(s));
+          }
+
+          const lossPer30 = matchInfo.lossPer30;
+          players.forEach(p => {
+            const pt = playTimes[p.name];
+            if (!pt) return;
+            const minutesPlayed = pt.end - pt.start;
+            const segments = Math.ceil(minutesPlayed / 30);
+            const totalLoss = match.type === "sparing" ? 0 : lossPer30 * segments;
+
+            const pObj = playerHealths.find(ph => ph.name === p.name);
+            if (pObj) {
+              pObj.health = Math.max(0, pObj.health - totalLoss);
+            }
+          });
+        });
+
+        playerHealths.forEach(p => {
+          p.health = Math.min(100, p.health + 6);
+        });
+      });
+
+      document.getElementById("output").textContent = output.join("\n");
+    }
   </script>
 </body>
 </html>
