@@ -182,8 +182,8 @@
       schedule.forEach(day => {
         output.push(`Dzień ${day.day}`);
         day.matches.forEach((type, matchIndex) => {
-          const matchInfo = matchTypes[type];
-          output.push(`  Mecz ${matchIndex + 1} (${type.toUpperCase()})`);
+          const matchInfo = matchTypes[match.type];
+          output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()})`);
 
           // Wybór najlepszej formacji
           let bestFormation = formations[0];
@@ -222,12 +222,17 @@
           // Symulacja zmian
           const changesLeft = matchInfo.changes;
           const subs = [];
-          const availableSubs = playerHealths.filter(p => !lineup.includes(p)).sort((a, b) => b.health - a.health);
+          const availableSubs = playerHealths.filter(p =>
+            !lineup.some(lp => lp.name === p.name)
+          ).sort((a, b) => b.health - a.health);
 
           for (let i = 0; i < changesLeft; i++) {
             const outPlayer = lineup.find(p => p.health < 60);
             if (!outPlayer) break;
-            const samePosition = availableSubs.find(p => p.position === outPlayer.position);
+            const samePosition = availableSubs.find(p =>
+              p.position === outPlayer.position &&
+              (p.position !== 'BR' || outPlayer.position === 'BR')
+            );
             if (samePosition) {
               const minute = 60 + i * 10; // Optymalna minuta zmiany
               subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position})`);
