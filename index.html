@@ -197,16 +197,58 @@
 	  }
 	  return importanceScore;
 	}
+	
+	function planStrategicLineups() {
+	  const plans = [];
+
+	  schedule.forEach(day => {
+		day.matches.forEach(match => {
+		  if (match.importance === "wysoka") {
+			let bestFormation = formations[0];
+			let maxFit = -1;
+
+			formations.forEach(f => {
+			  let fit = 0;
+			  for (let pos in f.structure) {
+				const count = f.structure[pos];
+				const available = players.filter(p => p.position === pos).length;
+				fit += Math.min(available, count);
+			  }
+			  if (fit > maxFit) {
+				maxFit = fit;
+				bestFormation = f;
+			  }
+			});
+
+			const plan = [];
+			for (let pos in bestFormation.structure) {
+			  const needed = bestFormation.structure[pos];
+			  const candidates = players
+				.filter(p => p.position === pos)
+				.sort((a, b) => (b.strength * (b.health ?? 100) / 100) - (a.strength * (a.health ?? 100) / 100))
+				.slice(0, needed);
+
+			  plan.push(...candidates.map(p => ({ name: p.name, position: p.position })));
+			}
+
+			plans.push({ day: day.day, lineup: plan });
+		  }
+		});
+	  });
+
+	  return plans;
+	}
 
 	function simulate() {
 	  const output = [];
 	  let playerHealths = players.map(p => ({ ...p }));
+	  const lineupPlans = planStrategicLineups();
 
 	  schedule.forEach(day => {
 		output.push(`Dzień ${day.day}`);
 		day.matches.forEach((match, matchIndex) => {
 		  const matchInfo = matchTypes[match.type];
-		  output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()})`);
+		  output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()}, ważność: ${match.importance})`);
 
 		  // Najlepsza formacja
 		  let bestFormation = formations[0];
@@ -227,41 +269,49 @@
 
 		  output.push(`    Zalecana formacja: ${bestFormation.name}`);
 
-			const lineup = [];
+		  const lineup = [];
 
-			for (let pos in bestFormation.structure) {
-			  const needed = bestFormation.structure[pos];
+		  for (let pos in bestFormation.structure) {
+			const needed = bestFormation.structure[pos];
 
-			  const candidates = playerHealths
-				.filter(p => p.position === pos)
-				.sort((a, b) => {
-				  // priorytet:
-				  // 1. zdrowi i kluczowi na ważny mecz? oszczędzamy!
-				  const futureA = getFutureMatchImportance(day.day, a);
-				  const futureB = getFutureMatchImportance(day.day, b);
-				  const aPriority = (a.key ? futureA : 0);
-				  const bPriority = (b.key ? futureB : 0);
-				  const restA = a.health;
-				  const restB = b.health;
-				  
-				  // preferuj zawodników mniej eksploatowanych i niepotrzebnych w przyszłości
-				  return (bPriority - aPriority) || (restB - restA);
-				});
+			const candidates = playerHealths
+			  .filter(p => p.position === pos)
+			  .sort((a, b) => {
+				const aPlanned = lineupPlans.some(plan =>
+				  plan.day === day.day &&
+				  plan.lineup.some(pl => pl.name === a.name)
+				);
+				const bPlanned = lineupPlans.some(plan =>
+				  plan.day === day.day &&
+				  plan.lineup.some(pl => pl.name === b.name)
+				);
 
-			  // tylko tych, którzy mają > 26% zdrowia
-			  const chosen = candidates.filter(p => p.health > 26).slice(-needed);
-			  lineup.push(...chosen);
-			}
+				const aScore = (aPlanned ? 100000 : 0) + a.strength * (a.health / 100);
+				const bScore = (bPlanned ? 100000 : 0) + b.strength * (b.health / 100);
+
+				return bScore - aScore;
+			  });
+
+			const chosen = candidates.filter(p => p.health > 40).slice(0, needed);
+			lineup.push(...chosen);
+		  }
 
 		  if (lineup.length < 11) {
 			output.push("    Brakuje zawodników do pełnego składu!");
 			return;
 		  }
 
-		  output.push("    Skład podstawowy:");
-		  lineup.forEach(p => output.push(`      ${p.name} (${p.position}) - ${p.health}%`));
+		  output.push("    Skład podstawowy (ze zdrowiem):");
+		  lineup.forEach(p => {
+			let status = "";
+			if (p.health >= 90) status = "🟢";
+			else if (p.health >= 70) status = "🟡";
+			else if (p.health >= 50) status = "🟠";
+			else status = "🔴";
+			output.push(`      ${status} ${p.name} (${p.position}) - ${p.health}%`);
+		  });
 
-		  // Lepsza logika zmian
+		  // Symulacja zmian – oszczędzanie graczy potrzebnych później
 		  const changesLeft = matchInfo.changes;
 		  const subs = [];
 		  const availableSubs = playerHealths.filter(p =>
@@ -273,14 +323,17 @@
 			const candidate = lineup
 			  .map(p => ({
 				player: p,
-				futureImportance: getFutureMatchImportance(day.day, p)
+				planned: lineupPlans.some(plan =>
+				  plan.day > day.day && plan.day <= day.day + 3 &&
+				  plan.lineup.some(pl => pl.name === p.name)
+				)
 			  }))
-			  .filter(p => p.futureImportance > 0)
-			  .sort((a, b) => b.futureImportance - a.futureImportance)[0];
+			  .filter(p => p.planned)
+			  .map(p => p.player)[0];
 
 			if (!candidate) break;
 
-			const outPlayer = candidate.player;
+			const outPlayer = candidate;
 			const samePosition = availableSubs.find(p =>
 			  p.position === outPlayer.position &&
 			  (p.position !== 'BR' || outPlayer.position === 'BR')
@@ -288,7 +341,7 @@
 
 			if (samePosition) {
 			  const minute = 45 + changesMade * 10;
-			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [oszczędzany na kolejne mecze]`);
+			  subs.push(`      Zmiana w ${minute}' - ${samePosition.name} za ${outPlayer.name} (${outPlayer.position}) [oszczędzamy na ważny mecz]`);
 			  lineup.splice(lineup.indexOf(outPlayer), 1, samePosition);
 			  availableSubs.splice(availableSubs.indexOf(samePosition), 1);
 			  changesMade++;
@@ -300,7 +353,7 @@
 			subs.forEach(s => output.push(s));
 		  }
 
-		  // Spadek zdrowia po meczu
+		  // Aktualizacja zdrowia
 		  lineup.forEach(p => {
 			const loss = match.type === "sparing" ? 0 : matchInfo.lossPer30 * 3;
 			p.health = Math.max(0, p.health - loss);
@@ -308,7 +361,7 @@
 
 		});
 
-		// Regeneracja zdrowia
+		// Regeneracja
 		playerHealths.forEach(p => p.health = Math.min(100, p.health + 6));
 	  });
 
