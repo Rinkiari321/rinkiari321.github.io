@@ -181,9 +181,9 @@
 
       schedule.forEach(day => {
         output.push(`Dzień ${day.day}`);
-        day.matches.forEach((type, matchIndex) => {
-          const matchInfo = matchTypes[matches.type];
-          output.push(`  Mecz ${matchIndex + 1} (${matches.type.toUpperCase()})`);
+        day.matches.forEach((match, matchIndex) => {
+          const matchInfo = matchTypes[match.type];
+          output.push(`  Mecz ${matchIndex + 1} (${match.type.toUpperCase()})`);
 
           // Wybór najlepszej formacji
           let bestFormation = formations[0];
